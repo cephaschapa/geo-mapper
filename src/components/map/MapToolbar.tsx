@@ -1,5 +1,10 @@
 import { Button } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { MapPin, LineChart, Square, Undo, Redo } from "lucide-react";
 
 interface MapToolbarProps {
@@ -20,14 +25,14 @@ export function MapToolbar({
   onRedo,
 }: MapToolbarProps) {
   const tools = [
-    { id: 'point', icon: MapPin, label: 'Add Point' },
-    { id: 'line', icon: LineChart, label: 'Add Road' },
-    { id: 'polygon', icon: Square, label: 'Add Area' },
+    { id: "point", icon: MapPin, label: "Add Point" },
+    { id: "line", icon: LineChart, label: "Add Road" },
+    { id: "polygon", icon: Square, label: "Add Area" },
   ];
 
   return (
     <TooltipProvider>
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-white rounded-lg shadow-lg p-2 flex space-x-2">
+      <div className="relative bg-white rounded-lg shadow-lg p-2 flex items-center space-x-2">
         {tools.map((tool) => (
           <Tooltip key={tool.id}>
             <TooltipTrigger asChild>
@@ -81,4 +86,4 @@ export function MapToolbar({
       </div>
     </TooltipProvider>
   );
-} 
+}
