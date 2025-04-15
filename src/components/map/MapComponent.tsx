@@ -3,10 +3,11 @@ import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { MapToolbar } from "./MapToolbar";
 import { v4 as uuidv4 } from "uuid";
-import type { Feature, Point, LineString, Polygon } from "geojson";
+import { Feature, GeoJSON, Geometry, GeoJsonProperties } from "geojson";
 import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { FeatureProperties } from "./FeatureProperties";
+import { FeatureList } from "./FeatureList";
 
 // Initialize Mapbox token
 const MAPBOX_TOKEN =
@@ -23,6 +24,14 @@ interface MapFeature {
   type: "point" | "line" | "polygon";
   coordinates: [number, number] | [number, number][];
   id: string;
+}
+
+interface CustomFeature extends Feature {
+  id: string;
+  properties: {
+    name: string;
+    description: string;
+  };
 }
 
 export function MapComponent({
@@ -45,9 +54,11 @@ export function MapComponent({
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [showResults, setShowResults] = useState(false);
-  const [features, setFeatures] = useState<MapFeature[]>([]);
+  const [features, setFeatures] = useState<Feature[]>([]);
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null);
   const [showProperties, setShowProperties] = useState(false);
+  const [linePoints, setLinePoints] = useState<[number, number][]>([]);
+  const [polygonPoints, setPolygonPoints] = useState<[number, number][]>([]);
 
   useEffect(() => {
     if (!mapContainer.current) return;
@@ -100,13 +111,13 @@ export function MapComponent({
 
       switch (drawingMode) {
         case "point":
-          addPoint(coordinates);
+          addPoint(e);
           break;
         case "line":
-          addLinePoint(coordinates);
+          addLinePoint(e);
           break;
         case "polygon":
-          addPolygonPoint(coordinates);
+          addPolygonPoint(e);
           break;
       }
     };
@@ -134,13 +145,13 @@ export function MapComponent({
 
       switch (drawingMode) {
         case "point":
-          addPoint(coordinates);
+          addPoint(e);
           break;
         case "line":
-          addLinePoint(coordinates);
+          addLinePoint(e);
           break;
         case "polygon":
-          addPolygonPoint(coordinates);
+          addPolygonPoint(e);
           break;
       }
     };
@@ -201,9 +212,10 @@ export function MapComponent({
 
     // Remove all layers from the map
     features.forEach((feature) => {
-      if (feature.id && map.current?.getLayer(feature.id)) {
-        map.current.removeLayer(feature.id);
-        map.current.removeSource(feature.id);
+      const featureId = feature.id?.toString();
+      if (featureId && map.current?.getLayer(featureId)) {
+        map.current.removeLayer(featureId);
+        map.current.removeSource(featureId);
       }
     });
 
@@ -215,218 +227,173 @@ export function MapComponent({
     if (!map.current) return;
 
     const feature = features[index];
-    if (feature.id && map.current.getLayer(feature.id)) {
-      map.current.removeLayer(feature.id);
-      map.current.removeSource(feature.id);
+    const featureId = feature.id?.toString();
+    if (featureId && map.current.getLayer(featureId)) {
+      map.current.removeLayer(featureId);
+      map.current.removeSource(featureId);
     }
 
     setFeatures((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const addPoint = (coordinates: [number, number]) => {
-    if (!map.current) return;
-
-    const featureId = uuidv4();
-    const feature: Feature = {
-      type: "Feature",
-      geometry: {
-        type: "Point",
-        coordinates,
-      },
-      properties: {},
-      id: featureId,
-    };
-
-    // Add the point to the map
-    map.current.addLayer({
-      id: featureId,
-      type: "circle",
-      source: {
-        type: "geojson",
-        data: feature,
-      },
-      paint: {
-        "circle-radius": 8,
-        "circle-color": "#ff0000",
-      },
-    });
-
-    setFeatures((prev) => [
-      ...prev,
-      { type: "point", coordinates, id: featureId },
-    ]);
+  const handleFeatureSelect = (feature: Feature) => {
+    setSelectedFeature(feature);
+    setShowProperties(true);
   };
 
-  const addLinePoint = (coordinates: [number, number]) => {
+  const handleFeatureDelete = (id: string) => {
     if (!map.current) return;
 
-    setFeatures((prev) => {
-      const lastFeature = prev[prev.length - 1];
-      if (lastFeature?.type === "line") {
-        const lineCoordinates = [
-          ...(lastFeature.coordinates as [number, number][]),
-          coordinates,
-        ];
-        const featureId = `line-${Date.now()}`;
+    // Remove from map
+    if (map.current.getLayer(id)) {
+      map.current.removeLayer(id);
+      map.current.removeSource(id);
+    }
 
-        // Update or create the line layer
-        if (map.current?.getLayer(lastFeature.id)) {
-          const source = map.current.getSource(
-            lastFeature.id
-          ) as mapboxgl.GeoJSONSource;
-          if (source) {
-            source.setData({
-              type: "Feature",
-              geometry: {
-                type: "LineString",
-                coordinates: lineCoordinates,
-              },
-              properties: {},
-            });
-          }
-        } else if (map.current) {
-          map.current.addLayer({
-            id: featureId,
-            type: "line",
-            source: {
-              type: "geojson",
-              data: {
-                type: "Feature",
-                geometry: {
-                  type: "LineString",
-                  coordinates: lineCoordinates,
-                },
-                properties: {},
-              },
-            },
-            paint: {
-              "line-color": "#ff0000",
-              "line-width": 2,
-            },
-          });
-        }
+    // Update state
+    setFeatures((prev) => prev.filter((f) => f.id?.toString() !== id));
+    if (selectedFeature?.id?.toString() === id) {
+      setSelectedFeature(null);
+      setShowProperties(false);
+    }
+  };
 
-        return [
-          ...prev.slice(0, -1),
-          { type: "line", coordinates: lineCoordinates, id: featureId },
-        ];
+  const addPoint = (e: mapboxgl.MapMouseEvent) => {
+    if (!map.current || !e.lngLat) return;
+
+    const featureId = uuidv4();
+    const sourceId = `source-${featureId}`;
+    const layerId = `layer-${featureId}`;
+    const feature: CustomFeature = {
+      type: "Feature",
+      id: featureId,
+      geometry: {
+        type: "Point",
+        coordinates: [e.lngLat.lng, e.lngLat.lat],
+      },
+      properties: {
+        name: `Point ${features.length + 1}`,
+        description: "New point feature",
+      },
+    };
+
+    setFeatures((prev) => [...prev, feature]);
+
+    // Add to map
+    if (!map.current.getSource(sourceId)) {
+      map.current.addSource(sourceId, {
+        type: "geojson",
+        data: feature,
+      });
+    }
+
+    if (!map.current.getLayer(layerId)) {
+      map.current.addLayer({
+        id: layerId,
+        type: "circle",
+        source: sourceId,
+        paint: {
+          "circle-radius": 6,
+          "circle-color": "#3b82f6",
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#ffffff",
+        },
+      });
+    }
+  };
+
+  const addLinePoint = (e: mapboxgl.MapMouseEvent) => {
+    if (!map.current || !e.lngLat) return;
+
+    const coordinates: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+    setLinePoints((prev) => [...prev, coordinates]);
+
+    if (linePoints.length > 0) {
+      const featureId = uuidv4();
+      const sourceId = `source-${featureId}`;
+      const layerId = `layer-${featureId}`;
+      const feature: CustomFeature = {
+        type: "Feature",
+        id: featureId,
+        geometry: {
+          type: "LineString",
+          coordinates: [...linePoints, coordinates],
+        },
+        properties: {
+          name: `Line ${features.length + 1}`,
+          description: "New line feature",
+        },
+      };
+
+      setFeatures((prev) => [...prev, feature]);
+
+      // Add to map
+      if (!map.current.getSource(sourceId)) {
+        map.current.addSource(sourceId, {
+          type: "geojson",
+          data: feature,
+        });
       }
 
-      const featureId = `line-${Date.now()}`;
-      if (map.current) {
+      if (!map.current.getLayer(layerId)) {
         map.current.addLayer({
-          id: featureId,
+          id: layerId,
           type: "line",
-          source: {
-            type: "geojson",
-            data: {
-              type: "Feature",
-              geometry: {
-                type: "LineString",
-                coordinates: [coordinates],
-              },
-              properties: {},
-            },
-          },
+          source: sourceId,
           paint: {
-            "line-color": "#ff0000",
+            "line-color": "#3b82f6",
             "line-width": 2,
           },
         });
       }
-
-      return [
-        ...prev,
-        { type: "line", coordinates: [coordinates], id: featureId },
-      ];
-    });
+    }
   };
 
-  const addPolygonPoint = (coordinates: [number, number]) => {
-    if (!map.current) return;
+  const addPolygonPoint = (e: mapboxgl.MapMouseEvent) => {
+    if (!map.current || !e.lngLat) return;
 
-    setFeatures((prev) => {
-      const lastFeature = prev[prev.length - 1];
-      if (lastFeature?.type === "polygon") {
-        const polygonCoordinates = [
-          ...(lastFeature.coordinates as [number, number][]),
-          coordinates,
-        ];
-        const featureId = `polygon-${Date.now()}`;
+    const coordinates: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+    setPolygonPoints((prev) => [...prev, coordinates]);
 
-        // Update or create the polygon layer
-        if (map.current?.getLayer(lastFeature.id)) {
-          const source = map.current.getSource(
-            lastFeature.id
-          ) as mapboxgl.GeoJSONSource;
-          if (source) {
-            source.setData({
-              type: "Feature",
-              geometry: {
-                type: "Polygon",
-                coordinates: [polygonCoordinates],
-              },
-              properties: {},
-            });
-          }
-        } else if (map.current) {
-          map.current.addLayer({
-            id: featureId,
-            type: "fill",
-            source: {
-              type: "geojson",
-              data: {
-                type: "Feature",
-                geometry: {
-                  type: "Polygon",
-                  coordinates: [polygonCoordinates],
-                },
-                properties: {},
-              },
-            },
-            paint: {
-              "fill-color": "#ff0000",
-              "fill-opacity": 0.5,
-              "fill-outline-color": "#ff0000",
-            },
-          });
-        }
+    if (polygonPoints.length > 0) {
+      const featureId = uuidv4();
+      const sourceId = `source-${featureId}`;
+      const layerId = `layer-${featureId}`;
+      const feature: CustomFeature = {
+        type: "Feature",
+        id: featureId,
+        geometry: {
+          type: "Polygon",
+          coordinates: [[...polygonPoints, coordinates]],
+        },
+        properties: {
+          name: `Polygon ${features.length + 1}`,
+          description: "New polygon feature",
+        },
+      };
 
-        return [
-          ...prev.slice(0, -1),
-          { type: "polygon", coordinates: polygonCoordinates, id: featureId },
-        ];
-      }
+      setFeatures((prev) => [...prev, feature]);
 
-      const featureId = `polygon-${Date.now()}`;
-      if (map.current) {
-        map.current.addLayer({
-          id: featureId,
-          type: "fill",
-          source: {
-            type: "geojson",
-            data: {
-              type: "Feature",
-              geometry: {
-                type: "Polygon",
-                coordinates: [[coordinates]],
-              },
-              properties: {},
-            },
-          },
-          paint: {
-            "fill-color": "#ff0000",
-            "fill-opacity": 0.5,
-            "fill-outline-color": "#ff0000",
-          },
+      // Add to map
+      if (!map.current.getSource(sourceId)) {
+        map.current.addSource(sourceId, {
+          type: "geojson",
+          data: feature,
         });
       }
 
-      return [
-        ...prev,
-        { type: "polygon", coordinates: [coordinates], id: featureId },
-      ];
-    });
+      if (!map.current.getLayer(layerId)) {
+        map.current.addLayer({
+          id: layerId,
+          type: "fill",
+          source: sourceId,
+          paint: {
+            "fill-color": "#3b82f6",
+            "fill-opacity": 0.5,
+          },
+        });
+      }
+    }
   };
 
   const handleToolSelect = (tool: "point" | "line" | "polygon" | null) => {
@@ -493,7 +460,7 @@ export function MapComponent({
   return (
     <div className="relative w-full h-full">
       <div ref={mapContainer} className="w-full h-full" />
-      <div className="flex w-full gap-4 absolute top-4 left-4 ">
+      <div className="flex w-full gap-4 absolute top-4 left-4">
         <MapToolbar
           selectedTool={selectedTool as string}
           onToolSelect={(tool: string) =>
@@ -505,7 +472,6 @@ export function MapComponent({
           canRedo={canRedo}
         />
 
-        {/* Floating Controls */}
         <div className="relative space-y-4">
           {/* Search Box */}
           <div className="w-80 bg-white rounded-lg shadow-lg p-4">
@@ -532,6 +498,14 @@ export function MapComponent({
               )}
             </div>
           </div>
+
+          {/* Feature List */}
+          <FeatureList
+            features={features}
+            onFeatureSelect={handleFeatureSelect}
+            onFeatureDelete={handleFeatureDelete}
+            selectedFeature={selectedFeature || undefined}
+          />
 
           {/* Feature Properties */}
           {showProperties && selectedFeature && (
